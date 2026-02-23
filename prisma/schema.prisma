@@ -1,0 +1,27 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model ProcessedMessage {
+  id          Int      @id @default(autoincrement())
+  jobId       String   @unique
+  groupId     String
+  instanceId  String
+  customerId  String
+  messageType String
+  messageData Json
+  processedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([groupId])
+  @@index([instanceId, customerId])
+  @@index([processedAt])
+  @@map("processed_messages")
+}

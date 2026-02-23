@@ -1,0 +1,290 @@
+### Queue API Test File
+### Use REST Client extension in VS Code or similar tool to test these endpoints
+
+@baseUrl = http://localhost:7777
+@queueType = message
+
+### ============================================
+### TEST ENDPOINTS - Populate Queues
+### ============================================
+
+### Populate all 3 queues with test jobs
+POST {{baseUrl}}/queue/test/populate
+Content-Type: application/json
+
+### Populate message queue with groupId testing
+### - 10 messages: same instanceId, 3 different customerIds (3 groups)
+### - 10 messages: same customerId, 10 different instanceIds (10 groups)
+### Messages will be saved to database for order verification
+POST {{baseUrl}}/queue/test/populate-messages
+Content-Type: application/json
+
+### --------------------------------------------
+### Test kind 1: Same instance, 10 msgs per customer, 3 customers (30 msgs, 3 groups)
+POST {{baseUrl}}/queue/test/same-instance-multi-customer
+Content-Type: application/json
+
+### Test kind 2: Same customer, 3 msgs per instance, 10 instances (30 msgs, 10 groups)
+POST {{baseUrl}}/queue/test/same-customer-multi-instance
+Content-Type: application/json
+
+### Test kind 3: 2 instances × 4 customers × 25 messages (200 msgs, 8 groups)
+POST {{baseUrl}}/queue/test/multi-instance-multi-customer
+Content-Type: application/json
+
+### ============================================
+### MESSAGE QUEUE
+### ============================================
+
+### Add a message job
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "text",
+    "message": "Hello World!"
+  }
+}
+
+### Add a message job with delay
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "text",
+    "message": "Delayed message"
+  },
+  "delay": 5000
+}
+
+### Add an image message
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "image",
+    "caption": "Check this out!",
+    "file": {
+      "url": "https://example.com/image.jpg",
+      "extension": "jpg",
+      "filename": "photo.jpg"
+    }
+  }
+}
+
+### Add a message with custom groupId
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "text",
+    "message": "Custom group message"
+  },
+  "groupId": "custom-group-123"
+}
+
+### ============================================
+### IMPORTATIONS QUEUE
+### ============================================
+
+### Add an importation job (CSV)
+POST {{baseUrl}}/queue/importations
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "importType": "csv",
+  "fileUrl": "https://example.com/data.csv",
+  "options": {
+    "delimiter": ",",
+    "encoding": "utf-8",
+    "skipHeader": true
+  }
+}
+
+### Add an importation job (JSON)
+POST {{baseUrl}}/queue/importations
+Content-Type: application/json
+
+{
+  "instanceId": "inst2",
+  "importType": "json",
+  "fileUrl": "https://example.com/data.json",
+  "options": {
+    "encoding": "utf-8"
+  }
+}
+
+### Add an importation job with delay
+POST {{baseUrl}}/queue/importations
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "importType": "csv",
+  "fileUrl": "https://example.com/delayed-import.csv",
+  "delay": 10000
+}
+
+### ============================================
+### EXPORTATIONS QUEUE
+### ============================================
+
+### Add an exportation job (PDF)
+POST {{baseUrl}}/queue/exportations
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "exportType": "reports",
+  "format": "pdf",
+  "filters": {
+    "dateFrom": "2024-01-01",
+    "dateTo": "2024-12-31",
+    "status": "completed"
+  },
+  "options": {
+    "includeCharts": true,
+    "includeDetails": true
+  }
+}
+
+### Add an exportation job (Excel)
+POST {{baseUrl}}/queue/exportations
+Content-Type: application/json
+
+{
+  "instanceId": "inst2",
+  "exportType": "data",
+  "format": "xlsx",
+  "filters": {
+    "category": "sales",
+    "region": "north"
+  }
+}
+
+### Add an exportation job with delay
+POST {{baseUrl}}/queue/exportations
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "exportType": "reports",
+  "format": "pdf",
+  "delay": 15000
+}
+
+### ============================================
+### GENERIC ENDPOINT (Any Queue Type)
+### ============================================
+
+### Add job to message queue (generic)
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "text",
+    "message": "Generic endpoint test"
+  }
+}
+
+### Add job to importations queue (generic)
+POST {{baseUrl}}/queue/importations
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "importType": "csv",
+  "fileUrl": "https://example.com/file.csv"
+}
+
+### Add job to exportations queue (generic)
+POST {{baseUrl}}/queue/exportations
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "exportType": "reports",
+  "format": "pdf"
+}
+
+### ============================================
+### QUEUE STATUS
+### ============================================
+
+### Get status for all queues
+GET {{baseUrl}}/queue/status
+
+### Get status for message queue
+GET {{baseUrl}}/queue/message/status
+
+### Get status for importations queue
+GET {{baseUrl}}/queue/importations/status
+
+### Get status for exportations queue
+GET {{baseUrl}}/queue/exportations/status
+
+### ============================================
+### BATCH OPERATIONS
+### ============================================
+
+### Add multiple messages to same customer (ordered)
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "text",
+    "message": "Message 1"
+  },
+  "orderMs": 1000
+}
+
+###
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "text",
+    "message": "Message 2"
+  },
+  "orderMs": 2000
+}
+
+###
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "text",
+    "message": "Message 3"
+  },
+  "orderMs": 3000
+}
