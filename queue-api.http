@@ -32,6 +32,83 @@ Content-Type: application/json
 POST {{baseUrl}}/queue/test/multi-instance-multi-customer
 Content-Type: application/json
 
+### Populate timeout test: 3 messages, same group (msg1: 2min wait, msg2: none, msg3: 3min wait)
+POST {{baseUrl}}/queue/test/populate-timeout
+Content-Type: application/json
+
+### Populate timeout SHORT: 3 messages, 10s + 15s (quick check of jobSendedAt / processedAt / processPid)
+POST {{baseUrl}}/queue/test/populate-timeout-short
+Content-Type: application/json
+
+### ============================================
+### POPULATE MESSAGES (manual)
+### ============================================
+
+### Populate: single message
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": {
+    "type": "text",
+    "message": "Single message"
+  }
+}
+
+### Populate: 3 messages same group (no timeout)
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": { "type": "text", "message": "Message 1" }
+}
+
+###
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": { "type": "text", "message": "Message 2" }
+}
+
+###
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": { "type": "text", "message": "Message 3" }
+}
+
+### Populate: message with timeout (e.g. 10 seconds)
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": { "type": "text", "message": "Message with 10s timeout" },
+  "timeout": 10000
+}
+
+### Populate: message with 2 min timeout
+POST {{baseUrl}}/queue/message
+Content-Type: application/json
+
+{
+  "instanceId": "inst1",
+  "customerId": "cust1",
+  "message": { "type": "text", "message": "Message with 2 min wait" },
+  "timeout": 120000
+}
+
 ### ============================================
 ### MESSAGE QUEUE
 ### ============================================

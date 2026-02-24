@@ -15,12 +15,16 @@ export class QueueController {
   /**
    * Add a job to a queue using event emitter API
    * POST /queue/:queueType
-   * 
+   *
+   * Options: orderMs, delay, groupId, timeout (ms).
+   * timeout: worker will call wait(timeout) before processing, truncating the queue for that group for X ms (one job per group at a time).
+   *
    * @example POST /queue/message
    * {
    *   "instanceId": "inst1",
    *   "customerId": "cust1",
-   *   "message": { "type": "text", "message": "Hello" }
+   *   "message": { "type": "text", "message": "Hello" },
+   *   "timeout": 120000
    * }
    */
   @Post(':queueType')
@@ -28,9 +32,10 @@ export class QueueController {
     @Param('queueType') queueType: string,
     @Body() body: any,
   ) {
-    // Extract options if provided
-    const { orderMs, delay, groupId, ...data } = body;
-    const options = { orderMs, delay, groupId };
+    // Extract options if provided (orderMs, delay, groupId, timeout)
+    const { orderMs, delay, groupId, timeout, ...data } = body;
+    const jobSendedAt = Date.now();
+    const options = { orderMs, delay, groupId, timeout, jobSendedAt };
 
     // Emit event (listener will add job to queue)
     this.queueEventEmitter.emit(queueType as QueueType, data, options);
@@ -40,6 +45,8 @@ export class QueueController {
       message: 'Event emitted, job will be added to queue',
       queueType,
       groupId: groupId || (data.instanceId && data.customerId ? `${data.instanceId}:${data.customerId}` : undefined),
+      timeout: timeout != null ? timeout : undefined,
+      jobSendedAt,
     };
   }
 
@@ -425,6 +432,104 @@ export class QueueController {
         groups,
       },
       jobsAdded: results.length,
+    };
+  }
+
+  // ─── Test: timeout behavior (wait truncates queue per group) ───
+  /**
+   * POST /queue/test/populate-timeout
+   *
+   * Adds 3 messages to the same group to test timeout behavior (long: 2 min, 3 min).
+   * - Message 1: timeout 2 minutes – worker waits 2 min then processes
+   * - Message 2: no timeout – processes right after message 1
+   * - Message 3: timeout 3 minutes – worker waits 3 min then processes
+   *
+   * For quick tests (jobSendedAt / processedAt / processPid in DB), use POST /queue/test/populate-timeout-short instead.
+   */
+  @Post('test/populate-timeout')
+  populateTestTimeout() {
+    return this.populateTimeoutInternal(
+      'inst-timeout-test',
+      'cust-timeout-test',
+      2 * 60 * 1000,
+      3 * 60 * 1000,
+      '2 minutes',
+      '3 minutes',
+      '[Timeout test] Message 1 – will wait 2 minutes before processing',
+      '[Timeout test] Message 2 – no timeout, processes after message 1',
+      '[Timeout test] Message 3 – will wait 3 minutes before processing',
+    );
+  }
+
+  /**
+   * POST /queue/test/populate-timeout-short
+   *
+   * Same as populate-timeout but with short timeouts (10s, 15s) so you can verify
+   * jobSendedAt, processedAt, processPid in the database without waiting 5+ minutes.
+   * - Message 1: timeout 10 seconds
+   * - Message 2: no timeout
+   * - Message 3: timeout 15 seconds
+   */
+  @Post('test/populate-timeout-short')
+  populateTestTimeoutShort() {
+    return this.populateTimeoutInternal(
+      'inst-timeout-short',
+      'cust-timeout-short',
+      10 * 1000,
+      15 * 1000,
+      '10 seconds',
+      '15 seconds',
+      '[Timeout short] Message 1 – wait 10s then process',
+      '[Timeout short] Message 2 – no timeout',
+      '[Timeout short] Message 3 – wait 15s then process',
+    );
+  }
+
+  private populateTimeoutInternal(
+    instanceId: string,
+    customerId: string,
+    timeout1Ms: number,
+    timeout3Ms: number,
+    desc1: string,
+    desc3: string,
+    msg1: string,
+    msg2: string,
+    msg3: string,
+  ) {
+    const timestamp = Date.now();
+    const groupId = `${instanceId}:${customerId}`;
+    const baseTime = Date.now();
+
+    this.queueEventEmitter.emit(
+      'message',
+      { instanceId, customerId, message: { type: 'text', message: msg1 } },
+      { orderMs: baseTime + 1, timeout: timeout1Ms },
+    );
+    this.queueEventEmitter.emit(
+      'message',
+      { instanceId, customerId, message: { type: 'text', message: msg2 } },
+      { orderMs: baseTime + 2 },
+    );
+    this.queueEventEmitter.emit(
+      'message',
+      { instanceId, customerId, message: { type: 'text', message: msg3 } },
+      { orderMs: baseTime + 3, timeout: timeout3Ms },
+    );
+
+    return {
+      success: true,
+      message: 'Test timeout jobs added to message queue (same group)',
+      timestamp,
+      groupId,
+      jobsAdded: [
+        { index: 1, timeoutMs: timeout1Ms, description: desc1 },
+        { index: 2, timeoutMs: null, description: 'no timeout' },
+        { index: 3, timeoutMs: timeout3Ms, description: desc3 },
+      ],
+      summary: {
+        description: 'One job per group at a time; wait(timeout) truncates the queue for that group',
+        sequence: `Job1 wait ${desc1} → process → Job2 process → Job3 wait ${desc3} → process`,
+      },
     };
   }
 }

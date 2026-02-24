@@ -3,6 +3,7 @@ import { BaseWorkerService } from './base-worker.service';
 import { QueueManagerService } from '../services/queue-manager.service';
 import { MessageQueuePayload } from '../../types/queue.types';
 import { PrismaService } from '../../prisma/prisma.service';
+import { wait } from '../helpers/wait.helper';
 
 /**
  * Worker service for processing message queue jobs
@@ -24,27 +25,42 @@ export class MessageWorkerService extends BaseWorkerService {
     data: MessageQueuePayload;
   }): Promise<void> {
     const data = job.data;
+    const timeoutMs = data.timeout;
+
     console.log('📨 [MessageWorkerService] processJob called!', {
       jobId: job.id,
       groupId: job.groupId,
       instanceId: data.instanceId,
       customerId: data.customerId,
       messageType: data.message?.type,
+      timeoutMs: timeoutMs ?? 'none',
     });
 
     this.logger.log(
       `Processing message job ${job.id} for group ${job.groupId} - Instance: ${data.instanceId}, Customer: ${data.customerId}`,
     );
+    const time = Date.now();
 
+    // Timeout behavior: wait(timeoutMs) truncates the queue for this group for X time
+    // (only one job per group runs at a time, so the next job waits until this one finishes)
+    if (timeoutMs != null && timeoutMs > 0) {
+      this.logger.log(
+        `[MessageWorkerService] Job ${job.id} waiting ${timeoutMs}ms (timeout) before processing...`,
+      );
+      await wait(timeoutMs);
+      this.logger.log(
+        `[MessageWorkerService] Job ${job.id} finished waiting, processing message.`,
+      );
+    }
     // Add your message processing logic here
-    await this.handleMessage(data, job.id);
+    await this.handleMessage(data, job.id, time);
   }
 
   /**
    * Handle the message processing
    * Saves message to database to verify processing order
    */
-  protected async handleMessage(data: MessageQueuePayload, jobId: string): Promise<void> {
+  protected async handleMessage(data: MessageQueuePayload, jobId: string, time: number): Promise<void> {
     console.log('📨 [MessageWorkerService] handleMessage called!', {
       jobId,
       instanceId: data.instanceId,
@@ -57,7 +73,7 @@ export class MessageWorkerService extends BaseWorkerService {
     );
 
     try {
-      // Save message to database to track processing order
+      // Save message to database to track processing order (jobSendedAt vs processedAt for timeout checks; processPid = Nest PID)
       const processedMessage = await this.prisma.processedMessage.create({
         data: {
           jobId: jobId,
@@ -66,7 +82,9 @@ export class MessageWorkerService extends BaseWorkerService {
           customerId: data.customerId,
           messageType: data.message?.type || 'unknown',
           messageData: data.message as any,
-          processedAt: new Date(),
+          jobSendedAt: data.jobSendedAt != null ? new Date(data.jobSendedAt) : undefined,
+          processPid: process.pid,
+          processedAt: new Date(time),
         },
       });
 
@@ -74,6 +92,8 @@ export class MessageWorkerService extends BaseWorkerService {
         id: processedMessage.id,
         jobId: processedMessage.jobId,
         groupId: processedMessage.groupId,
+        jobSendedAt: processedMessage.jobSendedAt,
+        processPid: processedMessage.processPid,
         processedAt: processedMessage.processedAt,
       });
 

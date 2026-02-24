@@ -145,10 +145,12 @@ export class QueueListener {
         }
       }
 
-      // Prepare payload with groupId
+      // Prepare payload with groupId, optional timeout, and jobSendedAt (injected by controller for message queue)
       const queuePayload: QueuePayload<QueueType> = {
         groupId,
         ...data,
+        ...(options?.timeout != null && { timeout: options.timeout }),
+        ...(queueType === 'message' && { jobSendedAt: options?.jobSendedAt ?? Date.now() }),
       } as QueuePayload<QueueType>;
 
       // Add job to queue using the generic addJob method

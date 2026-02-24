@@ -10,15 +10,17 @@ datasource db {
 }
 
 model ProcessedMessage {
-  id          Int      @id @default(autoincrement())
-  jobId       String   @unique
-  groupId     String
-  instanceId  String
-  customerId  String
-  messageType String
-  messageData Json
-  processedAt DateTime @default(now())
-  createdAt   DateTime @default(now())
+  id           Int       @id @default(autoincrement())
+  jobId        String    @unique
+  groupId      String
+  instanceId   String
+  customerId   String
+  messageType  String
+  messageData  Json
+  jobSendedAt  DateTime? // when the job was enqueued (to compare with processedAt for timeout checks)
+  processPid   Int?      // Nest process PID that processed this message (e.g. [Nest] 13688)
+  processedAt  DateTime  @default(now())
+  createdAt    DateTime  @default(now())
 
   @@index([groupId])
   @@index([instanceId, customerId])
