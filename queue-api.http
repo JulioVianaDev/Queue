@@ -12,6 +12,24 @@
 POST {{baseUrl}}/queue/test/populate
 Content-Type: application/json
 
+### Populate message queue with two messages timeout
+POST {{baseUrl}}/queue/test/two-messages-timeout
+Content-Type: application/json
+
+### Populate message queue with groupId testing
+### - 10 messages: same instanceId, 3 different customerIds (3 groups)
+### - 10 messages: same customerId, 10 different instanceIds (10 groups)
+### Messages will be saved to database for order verification
+POST {{baseUrl}}/queue/test/populate-messages
+Content-Type: application/json
+### Stress test: 2000 message jobs, 2000 different groups with 8 minutes timeout
+POST {{baseUrl}}/queue/test/stress-2000-groups-8min-timeout
+Content-Type: application/json
+
+### Stress test: 2000 message jobs, 2000 different groups
+POST {{baseUrl}}/queue/test/stress-2000-groups
+Content-Type: application/json
+
 ### Populate message queue with groupId testing
 ### - 10 messages: same instanceId, 3 different customerIds (3 groups)
 ### - 10 messages: same customerId, 10 different instanceIds (10 groups)

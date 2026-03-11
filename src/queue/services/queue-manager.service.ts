@@ -62,6 +62,17 @@ export class QueueManagerService implements OnModuleInit, OnModuleDestroy {
         maxConcurrency: parseInt(process.env.MESSAGE_QUEUE_CONCURRENCY || '5'),
         keepCompleted: parseInt(process.env.KEEP_COMPLETED_JOBS || '1000'),
         keepFailed: parseInt(process.env.KEEP_FAILED_JOBS || '1000'),
+        // For message queue we support per-job timeouts and high group counts.
+        // MESSAGE_JOB_HEARTBEAT_TIMEOUT_MS is the max time without a heartbeat before a job is considered stalled.
+        // This should be SMALL (e.g. 30000 = 30s) so that, after a PM2 reload, stalled jobs are quickly requeued.
+        // It is independent from your business timeout (data.timeout), which we handle in MessageWorkerService via startAt.
+        jobTimeoutMs: parseInt(
+          process.env.MESSAGE_JOB_HEARTBEAT_TIMEOUT_MS || '30000',
+        ),
+        // For stress tests with many groups (e.g. 2000), this should be >= number of groups.
+        reserveScanLimit: parseInt(
+          process.env.MESSAGE_QUEUE_RESERVE_SCAN_LIMIT || '2000',
+        ),
       },
       {
         name: 'importations',
@@ -93,6 +104,9 @@ export class QueueManagerService implements OnModuleInit, OnModuleDestroy {
       namespace: config.namespace,
       keepCompleted: config.keepCompleted,
       keepFailed: config.keepFailed,
+      // Optional advanced settings (only set when provided in config)
+      jobTimeoutMs: config.jobTimeoutMs,
+      reserveScanLimit: config.reserveScanLimit,
     });
 
     this.queues.set(queueType, queue);

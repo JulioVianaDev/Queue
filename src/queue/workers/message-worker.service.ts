@@ -4,6 +4,7 @@ import { QueueManagerService } from '../services/queue-manager.service';
 import { MessageQueuePayload } from '../../types/queue.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { wait } from '../helpers/wait.helper';
+import { Queue } from 'groupmq';
 
 /**
  * Worker service for processing message queue jobs
@@ -19,12 +20,8 @@ export class MessageWorkerService extends BaseWorkerService {
     console.log('📨 [MessageWorkerService] Constructor called - Service instantiated!');
   }
 
-  async processJob(job: {
-    id: string;
-    groupId: string;
-    data: MessageQueuePayload;
-  }): Promise<void> {
-    const data = job.data;
+  async processJob(job: any): Promise<void> {
+    const data = job.data as MessageQueuePayload & { startAt?: number };
     const timeoutMs = data.timeout;
 
     console.log('📨 [MessageWorkerService] processJob called!', {
@@ -39,21 +36,52 @@ export class MessageWorkerService extends BaseWorkerService {
     this.logger.log(
       `Processing message job ${job.id} for group ${job.groupId} - Instance: ${data.instanceId}, Customer: ${data.customerId}`,
     );
-    const time = Date.now();
+    const now = Date.now();
 
     // Timeout behavior: wait(timeoutMs) truncates the queue for this group for X time
     // (only one job per group runs at a time, so the next job waits until this one finishes)
+    // We persist the *first* startAt in the job data so, if the worker crashes/restarts, the next
+    // attempt only waits the remaining time (timeoutMs - elapsedSinceFirstStart).
     if (timeoutMs != null && timeoutMs > 0) {
+      let startAt = data.startAt;
+      // First run: persist startAt into job.data via Job API so it survives retries/restarts.
+      // The object passed to handler is a ReservedJob, not the Job entity, so we must fetch it via queue.getJob().
+      if (startAt == null) {
+        startAt = now;
+        try {
+          const queue = this.queueManager.getQueue('message') as Queue<MessageQueuePayload>;
+          const jobEntity: any = await (queue as any).getJob(job.id);
+          if (jobEntity && typeof jobEntity.updateData === 'function') {
+            await jobEntity.updateData({ ...data, startAt });
+          } else {
+            this.logger.warn(
+              `Job entity for ${job.id} does not support updateData, falling back to full timeout.`,
+            );
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Failed to persist startAt for job ${job.id}, falling back to full timeout. Error: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      const elapsed = now - (startAt ?? now);
+      const remaining = timeoutMs - elapsed;
+
+      const effectiveWait = remaining > 0 ? remaining : 0;
+
       this.logger.log(
-        `[MessageWorkerService] Job ${job.id} waiting ${timeoutMs}ms (timeout) before processing...`,
+        `[MessageWorkerService] Job ${job.id} waiting ${effectiveWait}ms (timeout=${timeoutMs}ms, elapsed=${elapsed}ms) before processing...`,
       );
-      await wait(timeoutMs);
+      if (effectiveWait > 0) {
+        await wait(effectiveWait);
+      }
       this.logger.log(
         `[MessageWorkerService] Job ${job.id} finished waiting, processing message.`,
       );
     }
     // Add your message processing logic here
-    await this.handleMessage(data, job.id, time);
+    await this.handleMessage(job.data as MessageQueuePayload, job.id, Date.now());
   }
 
   /**

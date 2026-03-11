@@ -3,7 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: group-postgres
+    container_name: group-postgres-timeout
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -21,7 +21,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: group-redis
+    container_name: group-redis-timeout
     restart: unless-stopped
     ports:
       - '6400:6379'

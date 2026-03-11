@@ -72,6 +72,17 @@ export interface QueueConfig {
   maxConcurrency: number;
   keepCompleted?: number;
   keepFailed?: number;
+  /**
+   * Optional per-queue job timeout (ms).
+   * Must be >= the longest per-job timeout you plan to use in that queue.
+   */
+  jobTimeoutMs?: number;
+  /**
+   * Optional scan limit for reserve() calls.
+   * For high group counts (e.g. 2000 groups), set this >= number of groups
+   * so workers can see all groups when reserving jobs.
+   */
+  reserveScanLimit?: number;
 }
 
 /**

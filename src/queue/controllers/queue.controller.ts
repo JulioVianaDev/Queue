@@ -279,6 +279,139 @@ export class QueueController {
     };
   }
 
+  // ─── Stress test: 2000 message jobs, 2000 different groups ───
+  /**
+   * POST /queue/test/stress-2000-groups
+   *
+   * Creates 2000 message jobs, each in a distinct group (unique instanceId:customerId),
+   * to test high group concurrency with multiple workers (e.g. 2 cores × 1 worker each,
+   * each worker handling ~1000 groups, reserveScanLimit=2000).
+   *
+   * Use this together with:
+   * - MESSAGE_QUEUE_CONCURRENCY=1000
+   * - MESSAGE_QUEUE_RESERVE_SCAN_LIMIT=2000
+   * - PM2 cluster with 2 instances
+   *
+   * After running, check the "processed_messages" table to verify:
+   * - No messages are lost
+   * - Per-group FIFO ordering is preserved
+   */
+  @Post('test/stress-2000-groups')
+  stress2000Groups() {
+    const timestamp = Date.now();
+    const total = 4000;
+    const baseTime = Date.now();
+    const results: any[] = [];
+
+    for (let i = 1; i <= total; i++) {
+      const instanceId = `stress-inst-${i}`;
+      const customerId = `stress-cust-${i}`;
+      const groupId = `${instanceId}:${customerId}`;
+
+      this.queueEventEmitter.emit(
+        'message',
+        {
+          instanceId,
+          customerId,
+          groupId,
+          message: {
+            type: 'text',
+            message: `Stress test message ${i} for group ${groupId}`,
+          },
+        },
+        {
+          orderMs: baseTime + i,
+        },
+      );
+
+      results.push({ index: i, instanceId, customerId, groupId });
+    }
+
+    return {
+      success: true,
+      kind: 'stress-2000-groups',
+      timestamp,
+      totalMessages: total,
+      uniqueGroups: total,
+      example: results.slice(0, 5),
+    };
+  }
+
+  /**
+   * POST /queue/test/stress-2000-groups-8min-timeout
+   *
+   * Stress test: 2000 groups, 2 messages per group.
+   * - First message: no timeout → runs immediately (batch1).
+   * - Second message: 8 minutes timeout → runs ~8 min after first (batch2).
+   *
+   * Expect: ~2000 rows in processed_messages with message_type = 'stress-timeout-batch1' soon,
+   * then after ~8 minutes ~2000 more with message_type = 'stress-timeout-batch2' (4000 total).
+   *
+   * DB checks:
+   *   SELECT message_type, COUNT(*) FROM processed_messages
+   *   WHERE message_type IN ('stress-timeout-batch1','stress-timeout-batch2')
+   *   GROUP BY message_type;
+   */
+  @Post('test/stress-2000-groups-8min-timeout')
+  stress2000Groups8MinTimeout() {
+    const timestamp = Date.now();
+    const totalGroups = 2000;
+    const timeoutMs = 8 * 60 * 1000; // 8 minutes
+    const baseTime = Date.now();
+    const results: any[] = [];
+
+    for (let i = 1; i <= totalGroups; i++) {
+      const instanceId = `stress-timeout-inst-${i}`;
+      const customerId = `stress-timeout-cust-${i}`;
+      const groupId = `${instanceId}:${customerId}`;
+
+      // First message: no timeout → runs immediately
+      this.queueEventEmitter.emit(
+        'message',
+        {
+          instanceId,
+          customerId,
+          groupId,
+          message: {
+            type: 'text',
+            message: `Batch1 group ${groupId} (immediate)`,
+          },
+        },
+        { orderMs: baseTime + i * 2 },
+      );
+
+      // Second message: 8 min timeout → runs after first completes, then waits 8 min
+      this.queueEventEmitter.emit(
+        'message',
+        {
+          instanceId,
+          customerId,
+          groupId,
+          message: {
+            type: 'text',
+            message: `Batch2 group ${groupId} (after 8 min)`,
+          },
+        },
+        { orderMs: baseTime + i * 2 + 1, timeout: timeoutMs },
+      );
+
+      results.push({ groupIndex: i, instanceId, customerId, groupId });
+    }
+
+    return {
+      success: true,
+      kind: 'stress-2000-groups-8min-timeout',
+      timestamp,
+      totalGroups,
+      totalJobs: totalGroups * 2,
+      timeoutMinutes: 8,
+      batch1: { description: 'No timeout, runs immediately', count: totalGroups, messageType: 'stress-timeout-batch1' },
+      batch2: { description: '8 min timeout, runs after batch1', count: totalGroups, messageType: 'stress-timeout-batch2' },
+      dbCheck: `SELECT message_type, COUNT(*) FROM processed_messages WHERE message_type IN ('stress-timeout-batch1','stress-timeout-batch2') GROUP BY message_type;`,
+      example: results.slice(0, 3),
+    };
+  }
+
   // ─── Test kind 1: Same instance, 10 messages per customer, 3 customers ───
   /**
    * POST /queue/test/same-instance-multi-customer
@@ -432,6 +565,51 @@ export class QueueController {
         groups,
       },
       jobsAdded: results.length,
+    };
+  }
+
+  /**
+   * POST /queue/test/two-messages-timeout
+   *
+   * Adds 2 messages in the same queue/group:
+   * - First: runs immediately (no timeout)
+   * - Second: 3 minutes timeout, then runs
+   */
+  @Post('test/two-messages-timeout')
+  twoMessagesWithTimeout() {
+    const baseTime = Date.now();
+    const instanceId = 'inst-simple';
+    const customerId = 'cust-simple';
+    const groupId = `${instanceId}:${customerId}`;
+    const timeout3Min = 3 * 60 * 1000;
+
+    this.queueEventEmitter.emit(
+      'message',
+      {
+        instanceId,
+        customerId,
+        message: { type: 'text', message: 'First message – runs immediately' },
+      },
+      { orderMs: baseTime + 1 },
+    );
+    this.queueEventEmitter.emit(
+      'message',
+      {
+        instanceId,
+        customerId,
+        message: { type: 'text', message: 'Second message – runs after 3 min' },
+      },
+      { orderMs: baseTime + 2, timeout: timeout3Min },
+    );
+
+    return {
+      success: true,
+      message: '2 messages added to message queue (same group)',
+      groupId,
+      jobs: [
+        { index: 1, timeout: null, description: 'Runs immediately' },
+        { index: 2, timeoutMs: timeout3Min, description: '3 minutes then runs' },
+      ],
     };
   }
 
