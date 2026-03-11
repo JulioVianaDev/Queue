@@ -106,6 +106,7 @@ export class QueueManagerService implements OnModuleInit, OnModuleDestroy {
       keepFailed: config.keepFailed,
       // Optional advanced settings (only set when provided in config)
       jobTimeoutMs: config.jobTimeoutMs,
+      logger: true,
       reserveScanLimit: config.reserveScanLimit,
     });
 

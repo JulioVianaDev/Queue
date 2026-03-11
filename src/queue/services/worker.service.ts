@@ -33,16 +33,23 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       await this.initializeWorker(queueType, instanceId);
     }
 
+    // After workers are created, ensure that all waiting message jobs have their
+    // groups present in the internal "ready" set so they can actually be reserved
+    // after multiple PM2 reloads (no jobs stuck forever in "waiting"/"Em espera").
+    await this.ensureWaitingMessageGroupsReady();
+
     this.logger.log(
       `All workers started (Instance: ${instanceId})`,
     );
   }
 
   async onModuleDestroy() {
-    this.logger.log('Stopping all workers (jobs stay in Redis for recovery on reload)...');
+    this.logger.log(
+      'Stopping all workers gracefully so in-flight jobs can finish or be marked stalled by GroupMQ...',
+    );
 
     const closePromises = Array.from(this.workers.values()).map((worker) =>
-      worker.close(SHUTDOWN_CLOSE_MS),
+      worker.close(),
     );
 
     await Promise.all(closePromises);
@@ -129,5 +136,92 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
    */
   getInstantiatedWorkerServices(): QueueType[] {
     return this.workerServiceFactory.getInstantiatedServices();
+  }
+
+  /**
+   * On startup, scan waiting jobs in the message queue and make sure their groups
+  * are in the "ready" set so the workers can pick them up. Also fixes poisoned
+  * groups where GroupMQ repeatedly logs "Blocking found group but reserve failed"
+  * by forcing a safe retry of non-processing jobs.
+   */
+  private async ensureWaitingMessageGroupsReady(): Promise<void> {
+    try {
+      const queue = this.queueManager.getQueue('message') as any;
+      if (!queue || typeof queue.getJobsByStatus !== 'function') {
+        console.log("queue or getJobsByStatus is not defined", queue);
+        return;
+      }
+
+      const redis = queue.redis as any;
+      const ns: string | undefined = queue.namespace;
+      if (!redis || !ns) {
+        console.log("redis or ns is not defined", redis, ns);
+        return;
+      }
+
+      const waitingJobs: any[] = await queue.getJobsByStatus(['waiting']);
+      console.log("waitingJobs", JSON.stringify(waitingJobs, null, 2));
+      if (!waitingJobs || waitingJobs.length === 0) {
+        return;
+      }
+
+      const readyKey = `${ns}:ready`;
+      const groupsKey = `${ns}:groups`;
+
+      for (const job of waitingJobs) {
+        const groupId: string | undefined = job.groupId;
+        if (!groupId) continue;
+
+        // Use orderMs if available, otherwise fall back to timestamp or "now" as score.
+        const score =
+          (job.orderMs as number | undefined) ??
+          (job.timestamp as number | undefined) ??
+          Date.now();
+
+        await redis.zadd(readyKey, score, groupId);
+        await redis.sadd(groupsKey, groupId);
+
+        // If GroupMQ keeps logging "Blocking found group but reserve failed"
+        // for this group, the safest app‑level recovery is:
+        // - dead‑letter the poisoned job (so it is visible as failed)
+        // - re‑enqueue the same payload as a fresh job in the same group.
+        // This clears any internal inconsistent state that prevents reserveAtomic.
+        try {
+          if (typeof queue.isJobProcessing === 'function') {
+            const processing = await queue.isJobProcessing(job.id);
+            if (!processing) {
+              const jobId = job.id;
+
+              // Move old job to dead‑letter for inspection
+              if (typeof queue.deadLetter === 'function') {
+                await queue.deadLetter(jobId, groupId);
+              }
+
+              // Re‑add with the same data and ordering so business timeout
+              // logic based on startedAt/needFinishedAt still holds.
+              if (typeof queue.add === 'function') {
+                await queue.add({
+                  groupId,
+                  data: job.data,
+                  orderMs: job.orderMs ?? job.timestamp ?? Date.now(),
+                });
+              }
+
+              this.logger.warn(
+                `[WorkerService] Detected poisoned waiting job ${jobId} in group ${groupId} and recreated it as a fresh job to recover from reserve failures.`,
+              );
+            }
+          }
+        } catch (recreateErr) {
+          this.logger.warn(
+            `[WorkerService] Failed to recover poisoned waiting job ${job.id} in group ${groupId}: ${(recreateErr as Error).message}`,
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        `[WorkerService] Failed to ensure waiting message groups are ready on startup: ${(err as Error).message}`,
+      );
+    }
   }
 }

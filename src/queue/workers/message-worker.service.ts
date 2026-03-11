@@ -21,7 +21,11 @@ export class MessageWorkerService extends BaseWorkerService {
   }
 
   async processJob(job: any): Promise<void> {
-    const data = job.data as MessageQueuePayload & { startAt?: number };
+    console.log("processJob called", JSON.stringify(job, null, 2));
+    const data = job.data as MessageQueuePayload & {
+      startedAt?: number;
+      needFinishedAt?: number;
+    };
     const timeoutMs = data.timeout;
 
     console.log('📨 [MessageWorkerService] processJob called!', {
@@ -38,21 +42,27 @@ export class MessageWorkerService extends BaseWorkerService {
     );
     const now = Date.now();
 
-    // Timeout behavior: wait(timeoutMs) truncates the queue for this group for X time
-    // (only one job per group runs at a time, so the next job waits until this one finishes)
-    // We persist the *first* startAt in the job data so, if the worker crashes/restarts, the next
-    // attempt only waits the remaining time (timeoutMs - elapsedSinceFirstStart).
+    // Timeout behavior:
+    //  - startedAt: first time the job began waiting
+    //  - needFinishedAt: absolute time when timeout should be considered complete (startedAt + timeout)
+    // These are stored in job data so multiple PM2 reloads don't change the final deadline.
     if (timeoutMs != null && timeoutMs > 0) {
-      let startAt = data.startAt;
-      // First run: persist startAt into job.data via Job API so it survives retries/restarts.
-      // The object passed to handler is a ReservedJob, not the Job entity, so we must fetch it via queue.getJob().
-      if (startAt == null) {
-        startAt = now;
+      let startedAt = data.startedAt;
+      let needFinishedAt = data.needFinishedAt;
+
+      if (startedAt == null || needFinishedAt == null) {
+        startedAt = startedAt ?? now;
+        needFinishedAt = needFinishedAt ?? startedAt + timeoutMs;
+
         try {
           const queue = this.queueManager.getQueue('message') as Queue<MessageQueuePayload>;
           const jobEntity: any = await (queue as any).getJob(job.id);
           if (jobEntity && typeof jobEntity.updateData === 'function') {
-            await jobEntity.updateData({ ...data, startAt });
+            await jobEntity.updateData({
+              ...data,
+              startedAt,
+              needFinishedAt,
+            });
           } else {
             this.logger.warn(
               `Job entity for ${job.id} does not support updateData, falling back to full timeout.`,
@@ -60,18 +70,17 @@ export class MessageWorkerService extends BaseWorkerService {
           }
         } catch (err) {
           this.logger.warn(
-            `Failed to persist startAt for job ${job.id}, falling back to full timeout. Error: ${(err as Error).message}`,
+            `Failed to persist startedAt/needFinishedAt for job ${job.id}, falling back to full timeout. Error: ${(err as Error).message}`,
           );
         }
       }
 
-      const elapsed = now - (startAt ?? now);
-      const remaining = timeoutMs - elapsed;
-
+      const finishAt = needFinishedAt ?? (startedAt ?? now) + timeoutMs;
+      const remaining = finishAt - now;
       const effectiveWait = remaining > 0 ? remaining : 0;
 
       this.logger.log(
-        `[MessageWorkerService] Job ${job.id} waiting ${effectiveWait}ms (timeout=${timeoutMs}ms, elapsed=${elapsed}ms) before processing...`,
+        `[MessageWorkerService] Job ${job.id} waiting ${effectiveWait}ms (timeout=${timeoutMs}ms, startedAt=${startedAt}, needFinishedAt=${finishAt}) before processing...`,
       );
       if (effectiveWait > 0) {
         await wait(effectiveWait);
@@ -81,7 +90,7 @@ export class MessageWorkerService extends BaseWorkerService {
       );
     }
     // Add your message processing logic here
-    await this.handleMessage(job.data as MessageQueuePayload, job.id, Date.now());
+    await this.handleMessage(job.data as MessageQueuePayload, job.id, new Date(data.startedAt ?? Date.now()).getTime());
   }
 
   /**

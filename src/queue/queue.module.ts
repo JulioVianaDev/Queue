@@ -1,6 +1,5 @@
 import { Module, Global } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { QueueService } from './services/queue.service';
 import { QueueManagerService } from './services/queue-manager.service';
 import { QueueEventEmitterService } from './services/queue-event-emitter.service';
 import { WorkerService } from './services/worker.service';
@@ -29,7 +28,6 @@ import { QueueController } from './controllers/queue.controller';
     }),
   ],
   providers: [
-    QueueService, // Keep for backward compatibility
     QueueManagerService,
     QueueEventEmitterService,
     WorkerService,
@@ -44,7 +42,6 @@ import { QueueController } from './controllers/queue.controller';
     ExportationWorkerService,
   ],
   exports: [
-    QueueService, // Keep for backward compatibility
     QueueManagerService,
     QueueEventEmitterService,
     WorkerService,
